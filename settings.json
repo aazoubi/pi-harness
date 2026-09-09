@@ -1,0 +1,10 @@
+{
+  "lastChangelogVersion": "0.85.1",
+  "theme": "catppuccin-mocha",
+  "defaultProvider": "github-copilot",
+  "defaultModel": "claude-sonnet-5",
+  "packages": [
+    "npm:pi-mcp-extension",
+    "npm:pi-tool-display"
+  ]
+}

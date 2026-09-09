@@ -1,0 +1,405 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type {
+	BashToolDetails,
+	EditToolDetails,
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ReadToolDetails,
+	Theme,
+} from "@earendil-works/pi-coding-agent";
+import {
+	createBashTool,
+	createEditTool,
+	createReadTool,
+	createWriteTool,
+} from "@earendil-works/pi-coding-agent";
+import {
+	Box,
+	Text,
+	CURSOR_MARKER,
+	matchesKey,
+	truncateToWidth,
+	visibleWidth,
+	type Focusable,
+} from "@earendil-works/pi-tui";
+
+type UiCardData = {
+	title: string;
+	body: string;
+	kind?: "info" | "success" | "warn" | "error";
+	timestamp: number;
+};
+
+export default function productivityUi(pi: ExtensionAPI) {
+	let turnCount = 0;
+	let lastState = "Ready";
+	let lastTool = "—";
+	const cwd = process.cwd();
+
+	const formatNumber = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
+
+	function collectStats(ctx: ExtensionCommandContext | any) {
+		let input = 0;
+		let output = 0;
+		let cost = 0;
+		let assistantMessages = 0;
+
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type === "message" && entry.message.role === "assistant") {
+				const msg = entry.message as AssistantMessage;
+				assistantMessages++;
+				input += msg.usage?.input ?? 0;
+				output += msg.usage?.output ?? 0;
+				cost += msg.usage?.cost?.total ?? 0;
+			}
+		}
+
+		return { input, output, cost, assistantMessages };
+	}
+
+	function setWidgets(_ctx: any) {
+		// V2: only keep the bottom footer menu, no extra widget below the editor.
+	}
+
+	function setFooter(ctx: any) {
+		ctx.ui.setFooter((tui, theme, footerData) => {
+			const unsub = footerData.onBranchChange(() => {
+				setWidgets(ctx);
+				tui.requestRender();
+			});
+
+			return {
+				dispose: unsub,
+				invalidate() {},
+				render(width: number): string[] {
+					const stats = collectStats(ctx);
+					const branch = footerData.getGitBranch() ?? "no-git";
+					const segments = [
+						theme.bg("selectedBg", ` ${theme.fg("accent", "STATE")} ${theme.fg("text", lastState)} `),
+						theme.bg("selectedBg", ` ${theme.fg("accent", "MODEL")} ${theme.fg("text", ctx.model?.id ?? "no-model")} `),
+						theme.bg("selectedBg", ` ${theme.fg("accent", "TOKENS")} ${theme.fg("text", `↑${formatNumber(stats.input)} ↓${formatNumber(stats.output)}`)} `),
+						theme.bg("selectedBg", ` ${theme.fg("accent", "COST")} ${theme.fg("text", `$${stats.cost.toFixed(3)}`)} `),
+						theme.bg("selectedBg", ` ${theme.fg("accent", "BRANCH")} ${theme.fg("text", branch)} `),
+						theme.bg("selectedBg", ` ${theme.fg("accent", "TOOL")} ${theme.fg("text", lastTool)} `),
+					];
+					const line = segments.join(theme.fg("dim", " │ "));
+					return [truncateToWidth(line, width)];
+				},
+			};
+		});
+	}
+
+	pi.registerMessageRenderer("ui-note", (message, { outputPad }, theme) => {
+		const details = (message.details ?? {}) as { kind?: UiCardData["kind"]; timestamp?: number };
+		const kind = details.kind ?? "info";
+		const color =
+			kind === "error" ? "error" : kind === "warn" ? "warning" : kind === "success" ? "success" : "accent";
+		const box = new Box(outputPad, 1, (t) => theme.bg("customMessageBg", t));
+		box.addChild(new Text(`${theme.fg(color, "●")} ${theme.fg("text", message.content)}`, 0, 0));
+		if (details.timestamp) {
+			box.addChild(new Text(theme.fg("dim", new Date(details.timestamp).toLocaleString()), 0, 0));
+		}
+		return box;
+	});
+
+	pi.registerEntryRenderer<UiCardData>("pi-ui-card", (entry, { expanded }, theme) => {
+		const data = entry.data;
+		const kind = data?.kind ?? "info";
+		const color =
+			kind === "error" ? "error" : kind === "warn" ? "warning" : kind === "success" ? "success" : "accent";
+		const box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
+		box.addChild(new Text(`${theme.fg(color, `▌ ${data?.title ?? "Card"}`)} ${theme.fg("dim", kind.toUpperCase())}`, 0, 0));
+		box.addChild(new Text(data?.body ?? "", 0, 0));
+		if (expanded && data?.timestamp) {
+			box.addChild(new Text(theme.fg("dim", new Date(data.timestamp).toLocaleString()), 0, 0));
+		}
+		return box;
+	});
+
+	const originalRead = createReadTool(cwd);
+	pi.registerTool({
+		name: "read",
+		label: "read",
+		description: originalRead.description,
+		parameters: originalRead.parameters,
+		async execute(toolCallId, params, signal, onUpdate) {
+			return originalRead.execute(toolCallId, params, signal, onUpdate);
+		},
+		renderCall(args, theme) {
+			return new Text(`${theme.fg("toolTitle", "󰈔 read")} ${theme.fg("accent", args.path)}`, 0, 0);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
+			const details = result.details as ReadToolDetails | undefined;
+			const content = result.content[0];
+			if (content?.type !== "text") return new Text(theme.fg("success", "Read complete"), 0, 0);
+			const lines = content.text.split("\n");
+			let text = `${theme.fg("success", "✓ file loaded")} ${theme.fg("dim", `(${lines.length} lines)`)}`;
+			if (details?.truncation?.truncated) text += theme.fg("warning", "  truncated");
+			if (expanded) text += `\n${theme.fg("dim", lines.slice(0, 12).join("\n"))}`;
+			return new Text(text, 0, 0);
+		},
+	});
+
+	const originalBash = createBashTool(cwd);
+	pi.registerTool({
+		name: "bash",
+		label: "bash",
+		description: originalBash.description,
+		parameters: originalBash.parameters,
+		async execute(toolCallId, params, signal, onUpdate) {
+			return originalBash.execute(toolCallId, params, signal, onUpdate);
+		},
+		renderCall(args, theme) {
+			const cmd = args.command.length > 72 ? `${args.command.slice(0, 69)}...` : args.command;
+			return new Text(`${theme.fg("toolTitle", " bash")} ${theme.fg("accent", cmd)}`, 0, 0);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("warning", "Running…"), 0, 0);
+			const details = result.details as BashToolDetails | undefined;
+			const content = result.content[0];
+			const output = content?.type === "text" ? content.text : "";
+			const exitMatch = output.match(/exit code: (\d+)/);
+			const exitCode = exitMatch ? Number.parseInt(exitMatch[1]!, 10) : 0;
+			let text = exitCode === 0 ? theme.fg("success", "✓ command done") : theme.fg("error", `✕ exit ${exitCode}`);
+			if (details?.truncation?.truncated) text += theme.fg("warning", "  truncated");
+			if (expanded) text += `\n${theme.fg("dim", output.split("\n").slice(0, 16).join("\n"))}`;
+			return new Text(text, 0, 0);
+		},
+	});
+
+	const originalEdit = createEditTool(cwd);
+	pi.registerTool({
+		name: "edit",
+		label: "edit",
+		description: originalEdit.description,
+		parameters: originalEdit.parameters,
+		async execute(toolCallId, params, signal, onUpdate) {
+			return originalEdit.execute(toolCallId, params, signal, onUpdate);
+		},
+		renderCall(args, theme) {
+			return new Text(`${theme.fg("toolTitle", "󰏫 edit")} ${theme.fg("accent", args.path)}`, 0, 0);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("warning", "Editing…"), 0, 0);
+			const details = result.details as EditToolDetails | undefined;
+			if (!details?.diff) return new Text(theme.fg("success", "✓ changes applied"), 0, 0);
+			const diffLines = details.diff.split("\n");
+			const adds = diffLines.filter((line) => line.startsWith("+") && !line.startsWith("+++" )).length;
+			const dels = diffLines.filter((line) => line.startsWith("-") && !line.startsWith("---" )).length;
+			let text = `${theme.fg("success", `+${adds}`)} ${theme.fg("error", `-${dels}`)} ${theme.fg("dim", "lines changed")}`;
+			if (expanded) text += `\n${theme.fg("dim", diffLines.slice(0, 18).join("\n"))}`;
+			return new Text(text, 0, 0);
+		},
+	});
+
+	const originalWrite = createWriteTool(cwd);
+	pi.registerTool({
+		name: "write",
+		label: "write",
+		description: originalWrite.description,
+		parameters: originalWrite.parameters,
+		async execute(toolCallId, params, signal, onUpdate) {
+			return originalWrite.execute(toolCallId, params, signal, onUpdate);
+		},
+		renderCall(args, theme) {
+			return new Text(`${theme.fg("toolTitle", "󰆓 write")} ${theme.fg("accent", args.path)} ${theme.fg("dim", `(${args.content.split("\n").length} lines)`)}`, 0, 0);
+		},
+		renderResult(result, { isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("warning", "Writing…"), 0, 0);
+			return new Text(theme.fg("success", "✓ file written"), 0, 0);
+		},
+	});
+
+	pi.on("session_start", async (event, ctx) => {
+		if (!ctx.hasUI) return;
+		turnCount = 0;
+		lastState = "Ready";
+		lastTool = "—";
+		setFooter(ctx);
+		setWidgets(ctx);
+		ctx.ui.setStatus("pi-ui", "");
+		pi.sendMessage({
+			customType: "ui-note",
+			content: `Productivity UI aktiv: Footer, Statusinfos und Panels geladen (${event.reason}).`,
+			display: true,
+			details: { kind: "success", timestamp: Date.now() },
+		});
+	});
+
+	pi.on("turn_start", async (_event, ctx) => {
+		turnCount++;
+		lastState = "Thinking";
+		ctx.ui.setStatus("pi-ui", ctx.ui.theme.fg("accent", `● Turn ${turnCount}`));
+		setWidgets(ctx);
+	});
+
+	pi.on("tool_execution_start", async (event, ctx) => {
+		lastTool = event.toolName;
+		lastState = `Tool: ${event.toolName}`;
+		ctx.ui.setStatus("pi-ui", ctx.ui.theme.fg("accent", `● ${event.toolName}`));
+		setWidgets(ctx);
+	});
+
+	pi.on("turn_end", async (_event, ctx) => {
+		lastState = "Ready";
+		ctx.ui.setStatus("pi-ui", ctx.ui.theme.fg("success", `✓ Turn ${turnCount} complete`));
+		setWidgets(ctx);
+	});
+
+	pi.on("model_select", async (_event, ctx) => {
+		setWidgets(ctx);
+	});
+
+	pi.registerCommand("ui-panel", {
+		description: "Open the productivity overview panel",
+		handler: async (_args, ctx) => {
+			await ctx.ui.custom<void>(
+				(_tui, theme, _keybindings, done) =>
+					new ProductivityPanel(theme, ctx, done, (data: UiCardData) => pi.appendEntry<UiCardData>("pi-ui-card", data)),
+				{
+					overlay: true,
+					overlayOptions: { width: "60%", minWidth: 64, maxHeight: "80%", anchor: "right-center", margin: 1 },
+				},
+			);
+		},
+	});
+
+	pi.registerCommand("ui-card", {
+		description: "Create a pretty card in the chat transcript",
+		handler: async (args) => {
+			pi.appendEntry<UiCardData>("pi-ui-card", {
+				title: "Productivity Note",
+				body: args.trim() || "Nutze /ui-panel für das Dashboard und behalte Footer + Status im Blick.",
+				kind: "info",
+				timestamp: Date.now(),
+			});
+		},
+	});
+}
+
+class ProductivityPanel implements Focusable {
+	focused = false;
+	private selected = 0;
+	private notes = ["Focus task", "Next command", "Risk / blocker"];
+	private values = ["", "", ""];
+	private cursors = [0, 0, 0];
+
+	constructor(
+		private theme: Theme,
+		private ctx: ExtensionCommandContext,
+		private done: () => void,
+		private saveCard: (data: UiCardData) => void,
+	) {}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.done();
+			return;
+		}
+
+		if (matchesKey(data, "up")) {
+			this.selected = Math.max(0, this.selected - 1);
+			return;
+		}
+		if (matchesKey(data, "down") || matchesKey(data, "tab")) {
+			this.selected = Math.min(this.notes.length - 1, this.selected + 1);
+			return;
+		}
+		if (matchesKey(data, "return")) {
+			const body = this.notes.map((label, i) => `${label}: ${this.values[i] || "—"}`).join("\n");
+			this.ctx.ui.notify("Panel-Notiz als Card gespeichert", "info");
+			this.ctx.ui.setStatus("pi-ui-panel", this.theme.fg("accent", "Panel note saved"));
+			this.saveCard({
+				title: "Panel Snapshot",
+				body,
+				kind: "success",
+				timestamp: Date.now(),
+			});
+			this.done();
+			return;
+		}
+
+		const idx = this.selected;
+		if (matchesKey(data, "backspace")) {
+			if (this.cursors[idx] > 0) {
+				this.values[idx] = this.values[idx].slice(0, this.cursors[idx] - 1) + this.values[idx].slice(this.cursors[idx]);
+				this.cursors[idx]--;
+			}
+			return;
+		}
+		if (matchesKey(data, "left")) {
+			this.cursors[idx] = Math.max(0, this.cursors[idx] - 1);
+			return;
+		}
+		if (matchesKey(data, "right")) {
+			this.cursors[idx] = Math.min(this.values[idx].length, this.cursors[idx] + 1);
+			return;
+		}
+		if (data.length === 1 && data.charCodeAt(0) >= 32) {
+			this.values[idx] =
+				this.values[idx].slice(0, this.cursors[idx]) + data + this.values[idx].slice(this.cursors[idx]);
+			this.cursors[idx]++;
+		}
+	}
+
+	render(_width: number): string[] {
+		const w = 72;
+		const innerW = w - 2;
+		const th = this.theme;
+		const stats = this.collectStats();
+		const lines: string[] = [];
+		const branch = this.ctx.sessionManager.getCurrentSessionFile?.() ? "session active" : "session";
+
+		const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
+		const row = (content: string) => th.fg("border", "│") + pad(content, innerW) + th.fg("border", "│");
+
+		lines.push(th.fg("borderAccent", `╭${"─".repeat(innerW)}╮`));
+		lines.push(row(` ${th.fg("accent", "󰆍 Pi Productivity Panel")} ${th.fg("dim", "• live overview")}`));
+		lines.push(row(""));
+		lines.push(row(` ${th.fg("dim", "model")} ${this.ctx.model?.id ?? "no-model"}`));
+		lines.push(row(` ${th.fg("dim", "messages")} ${String(stats.assistantMessages)}   ${th.fg("dim", "tokens")} ↑${stats.input} ↓${stats.output}   ${th.fg("dim", "cost")} $${stats.cost.toFixed(3)}`));
+		lines.push(row(` ${th.fg("dim", "status")} ${branch}`));
+		lines.push(row(""));
+		lines.push(row(` ${th.fg("dim", "quick notes — Enter saves as pretty chat card")}`));
+
+		for (let i = 0; i < this.notes.length; i++) {
+			const label = i === this.selected ? th.fg("accent", this.notes[i]) : th.fg("text", this.notes[i]);
+			let value = this.values[i];
+			if (i === this.selected) {
+				const cur = this.cursors[i];
+				const before = value.slice(0, cur);
+				const cursorChar = cur < value.length ? value[cur] : " ";
+				const after = value.slice(cur + 1);
+				const marker = this.focused ? CURSOR_MARKER : "";
+				value = `${before}${marker}\x1b[7m${cursorChar}\x1b[27m${after}`;
+			}
+			lines.push(row(` ${i === this.selected ? "▶" : "•"} ${label}: ${value}`));
+		}
+
+		lines.push(row(""));
+		lines.push(row(` ${th.fg("dim", "Esc close • ↑↓ move • type to edit • Enter save")}`));
+		lines.push(th.fg("borderAccent", `╰${"─".repeat(innerW)}╯`));
+		return lines;
+	}
+
+	private collectStats() {
+		let input = 0;
+		let output = 0;
+		let cost = 0;
+		let assistantMessages = 0;
+		for (const entry of this.ctx.sessionManager.getBranch()) {
+			if (entry.type === "message" && entry.message.role === "assistant") {
+				const msg = entry.message as AssistantMessage;
+				assistantMessages++;
+				input += msg.usage?.input ?? 0;
+				output += msg.usage?.output ?? 0;
+				cost += msg.usage?.cost?.total ?? 0;
+			}
+		}
+		return { input, output, cost, assistantMessages };
+	}
+
+	invalidate(): void {}
+	dispose(): void {}
+}
