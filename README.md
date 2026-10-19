@@ -41,7 +41,7 @@ pi auth
 | `mcp.json` | MCP-Server-Konfiguration (z. B. Playwright) |
 | `models-store.json` | zusätzliche/benutzerdefinierte Modell-Definitionen |
 | `agents/` | Sub-Agent-Definitionen (planner, reviewer, scout, worker) |
-| `extensions/` | eigene pi-Extensions (Memory, Side-Chat, Subagents-UI, Workflow-Runner, Firecrawl, Fast-Mode, Code-State, Tool-Display, RTK-Plugin …) |
+| `extensions/` | eigene pi-Extensions (Memory, Side-Chat, Subagents-UI, Workflow-Runner, Firecrawl, Fast-Mode, Code-State, Tool-Display, RTK-Plugin, Tiles …) |
 | `prompts/` | wiederverwendbare Prompt-Templates |
 | `themes/` | eigenes Terminal-Theme (Catppuccin Mocha) |
 
