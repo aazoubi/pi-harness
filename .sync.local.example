@@ -1,0 +1,5 @@
+# Kopie nach .sync.local (wird nicht eingecheckt) und mit eigenen Begriffen fuellen.
+# Regex, bei dessen Treffer ein Push abgebrochen wird (Firma, Projekte, interne Namen, Mail-Domain ...):
+DENY_REGEX='firma|projektname|interne-domain'
+# Optional: Muster fuer ein Paket in settings.json, das Dateien schon liefert (dann wird nichts doppelt gepullt):
+PKG_PATTERN='mein-firmenpaket'

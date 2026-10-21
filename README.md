@@ -18,7 +18,7 @@ npm install -g @earendil-works/pi-coding-agent
 ## Installation
 
 ```bash
-git clone https://github.com/aazoubi-da3m/pi-harness.git
+git clone https://github.com/aazoubi/pi-harness.git
 cd pi-harness
 ./install.sh
 ```
@@ -44,6 +44,19 @@ pi auth
 | `extensions/` | eigene pi-Extensions (Memory, Side-Chat, Subagents-UI, Workflow-Runner, Firecrawl, Fast-Mode, Code-State, Tool-Display, RTK-Plugin, Tiles …) |
 | `prompts/` | wiederverwendbare Prompt-Templates (Workflow: implement, scout-and-plan; Skill-Befehle: spec, plan, build, test, review, code-simplify) |
 | `themes/` | eigenes Terminal-Theme (Catppuccin Mocha) |
+
+## Synchron halten (`sync.sh`)
+
+```bash
+./sync.sh status         # Unterschiede zwischen Repo und ~/.pi/agent (nur Allowlist)
+./sync.sh push           # Vorschau: was wuerde ins Repo uebernommen
+./sync.sh push --yes     # committen und pushen (ohne den aktiven gh-Account umzuschalten)
+./sync.sh pull           # nur fehlende Dateien aus dem Repo holen, nie etwas ueberschreiben
+```
+
+Synchronisiert wird nur eine feste Allowlist (Prompts, Themes, Agents, `tiles.ts`, `models-store.json`). `settings.json`,
+Zugangsdaten und Sessions werden nie angefasst. Vor jedem Push prueft ein Scan auf Firmen-/Arbeitsbezug; die Begriffe stehen in
+`.sync.local` (nicht im Git, Vorlage: `.sync.local.example`). Ohne diese Datei wird nichts gepusht.
 
 ## Hinweise
 
