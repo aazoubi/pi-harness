@@ -42,7 +42,7 @@ pi auth
 | `models-store.json` | zusätzliche/benutzerdefinierte Modell-Definitionen |
 | `agents/` | Sub-Agent-Definitionen (planner, reviewer, scout, worker) |
 | `extensions/` | eigene pi-Extensions (Memory, Side-Chat, Subagents-UI, Workflow-Runner, Firecrawl, Fast-Mode, Code-State, Tool-Display, RTK-Plugin, Tiles …) |
-| `prompts/` | wiederverwendbare Prompt-Templates |
+| `prompts/` | wiederverwendbare Prompt-Templates (Workflow: implement, scout-and-plan; Skill-Befehle: spec, plan, build, test, review, code-simplify) |
 | `themes/` | eigenes Terminal-Theme (Catppuccin Mocha) |
 
 ## Hinweise
@@ -51,4 +51,5 @@ pi auth
   Session-/Memory-Verlauf sind bewusst ausgeschlossen.
 - Manche Extensions haben eigene `package.json`/Dependencies (z. B. `extensions/workflow`);
   dort ggf. `npm install` im jeweiligen Ordner ausführen.
+- **Nur Privates:** Arbeits- und Firmenbezogenes (z. B. Firmen-Pakete in `settings.json`) gehoert nicht in dieses Repo und wird nicht synchronisiert. `settings.json` hier ist bewusst die private Variante.
 - Nach dem Sync: pi neu starten, damit Settings/Extensions geladen werden.
